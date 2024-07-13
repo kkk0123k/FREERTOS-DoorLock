@@ -28,30 +28,36 @@
 #define SS_PIN 5
 #define RST_PIN 4
 
-//Define Firebase Data object
+// Define Firebase Data object for interfacing with the Firebase Realtime Database
 FirebaseData fbdo;
-
+// Define Firebase Authentication object for handling authentication
 FirebaseAuth auth;
+// Define Firebase Configuration object for setting up Firebase configuration details
 FirebaseConfig config;
-
+// Define the path for the password node in the Firebase Realtime Database
 const char* passwordPath = "password";
+// Define the path for the validCard node in the Firebase Realtime Database
 const char* uidPath = "validCard";
-
+// Variable to store the previous time data was sent, used for timing intervals
 unsigned long sendDataPrevMillis = 0;
-int intValue;
-float floatValue;
+// Boolean flag to indicate if the Firebase signup was successful
 bool signupOK = false;
-int count = 0;
 
 // Connect to RFID and LCD
 MFRC522 mfrc522(SS_PIN, RST_PIN);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-//Define task
+// Define task handles for FreeRTOS tasks. These handles will be used to manage and control the tasks.
+// Handle for the task that updates the LCD display
 TaskHandle_t lcdTaskHandle = NULL;
+// Handle for the task that manages the RFID reader
 TaskHandle_t rfidTaskHandle = NULL;
+// Handle for the task that handles keypad input
 TaskHandle_t keyPadTaskHandle = NULL;
+// Define a semaphore handle for the mutex. This mutex will be used to synchronize access to the LCD display,
+// ensuring that only one task can update the display at a time.
 SemaphoreHandle_t mutexLCD;
+
 
 const byte ROWS = 4;  // Four rows
 const byte COLS = 4;  // Four columns
@@ -448,32 +454,36 @@ void setup() {
       ;
   }
 
-  xTaskCreatePinnedToCore(
-    lcdTask,
-    "lcdTask",
-    10000,
-    NULL,
-    1,
-    &lcdTaskHandle,
-    0);
+// Create the LCD task and pin it to core 0
+xTaskCreatePinnedToCore(
+  lcdTask,           // Function that implements the task
+  "lcdTask",         // Name of the task
+  10000,             // Stack size allocated for the task in bytes
+  NULL,              // Parameter passed to the task (not used here)
+  1,                 // Priority of the task
+  &lcdTaskHandle,    // Task handle used to manage the task
+  0);                // Core on which the task is pinned (core 0)
 
-  xTaskCreatePinnedToCore(
-    rfidTask,
-    "rfidTask",
-    4096,
-    NULL,
-    2,
-    &rfidTaskHandle,
-    0);
+// Create the RFID task and pin it to core 0
+xTaskCreatePinnedToCore(
+  rfidTask,          // Function that implements the task
+  "rfidTask",        // Name of the task
+  4096,              // Stack size allocated for the task in bytes
+  NULL,              // Parameter passed to the task (not used here)
+  2,                 // Priority of the task
+  &rfidTaskHandle,   // Task handle used to manage the task
+  0);                // Core on which the task is pinned (core 0)
 
-  xTaskCreatePinnedToCore(
-    keyPadTask,
-    "keyPadTask",
-    4096,
-    NULL,
-    3,
-    &keyPadTaskHandle,
-    0);
+// Create the keypad task and pin it to core 0
+xTaskCreatePinnedToCore(
+  keyPadTask,        // Function that implements the task
+  "keyPadTask",      // Name of the task
+  4096,              // Stack size allocated for the task in bytes
+  NULL,              // Parameter passed to the task (not used here)
+  3,                 // Priority of the task
+  &keyPadTaskHandle, // Task handle used to manage the task
+  0);                // Core on which the task is pinned (core 0)
+
 
   byte emptyUID[4] = { 0, 0, 0, 0 };  // Temporary array for comparison
 
@@ -508,39 +518,52 @@ void connectToWiFi() {
 }
 
 void firebaseSetup() {
-  /* Assign the api key (required) */
+  /* Assign the API key (required for authenticating requests to Firebase services) */
   config.api_key = API_KEY;
 
-  /* Assign the RTDB URL (required) */
+  /* Assign the Realtime Database URL (required to identify the database instance to connect to) */
   config.database_url = DATABASE_URL;
 
-  /* Sign up */
+  /* Attempt to sign up for a new Firebase user account (using anonymous authentication) */
   if (Firebase.signUp(&config, &auth, "", "")) {
+    /* If sign-up is successful, print "ok" to the serial monitor and set the signupOK flag to true */
     Serial.println("ok");
     signupOK = true;
   } else {
+    /* If sign-up fails, print the error message from the signup process to the serial monitor */
     Serial.printf("%s\n", config.signer.signupError.message.c_str());
   }
 
-  /* Assign the callback function for the long running token generation task */
-  config.token_status_callback = tokenStatusCallback;  //see addons/TokenHelper.h
+  /* Assign the callback function for handling token generation status updates
+     (TokenHelper.h defines the actual implementation of tokenStatusCallback)
+     This function will be called to provide updates on the token generation process. */
+  config.token_status_callback = tokenStatusCallback;  // see addons/TokenHelper.h
 
+  /* Initialize the Firebase library with the provided configuration and authentication objects
+     (config contains settings such as API key and database URL, and auth holds authentication info) */
   Firebase.begin(&config, &auth);
+
+  /* Enable automatic WiFi reconnection
+     (if the WiFi connection drops, the library will attempt to reconnect automatically) */
   Firebase.reconnectWiFi(true);
 }
 
 
+
 void writeValidUIDToFirebase(int index) {
-  // Write a single validUID to Firebase at the specified index
+  // Convert the valid UID at the specified index to a hex string
   char uidStr[9];  // 4 bytes UID as hex string (8 characters + null terminator)
   snprintf(uidStr, sizeof(uidStr), "%02X%02X%02X%02X", validUID[index][0], validUID[index][1], validUID[index][2], validUID[index][3]);
 
+  // Create the Firebase path for the specified index
   String path = String(uidPath) + "/" + String(index);
   if (Firebase.RTDB.setString(&fbdo, path.c_str(), uidStr)) {
+    // If writing to Firebase is successful, print a success message
     Serial.print("UID ");
     Serial.print(index);
     Serial.println(" written to Firebase.");
   } else {
+    // If writing to Firebase fails, print the error reason
     Serial.print("Failed to write UID ");
     Serial.print(index);
     Serial.print(": ");
@@ -563,8 +586,6 @@ void writeNewPasswordToFirebase(const char* newPassword) {
     Serial.println("REASON: " + fbdo.errorReason());
   }
 }
-
-#include <Firebase_ESP_Client.h>
 
 void readUIDFromFirebase() {
   // Read the list of valid UIDs from Firebase
@@ -609,3 +630,4 @@ void readPasswordFromFirebase() {
     Serial.println(fbdo.errorReason());
   }
 }
+
